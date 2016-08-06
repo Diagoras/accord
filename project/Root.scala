@@ -5,6 +5,7 @@ import sbt._
 import org.scalajs.sbtplugin.ScalaJSPlugin.autoImport._
 import sbtrelease.ReleasePlugin.autoImport._
 import com.typesafe.sbt.SbtPgp.autoImport.PgpKeys._
+import scoverage.ScoverageSbtPlugin.autoImport._
 
 object Root extends Build {
 
@@ -49,7 +50,7 @@ object Root extends Build {
     }
 
   lazy val compileOptions = Seq(
-    scalaVersion := "2.11.1",
+    scalaVersion := "2.12.0-M4",
     crossScalaVersions :=
       Seq( "2.10.3", "2.11.1" ) ++
       ( if ( javaRuntimeVersion >= 1.8 ) Seq( "2.12.0-M4" ) else Seq.empty ),
@@ -63,10 +64,40 @@ object Root extends Build {
     noFatalWarningsOn( task = doc )      // Warnings aren't considered fatal on document generation
   )
 
+  object ScalaVersion {
+    object SupportsCoverage {
+      def unapply( v: String ): Option[ String ] =
+        if ( ( v startsWith "2.10" ) || ( v startsWith "2.11" ) ) Some( v ) else None
+    }
+    object v2_12 {
+      def unapply( v: String ): Option[ String ] = if ( v startsWith "2.12" ) Some( v ) else None
+    }
+  }
+
+  lazy val coverageSettings = Seq(
+    coverageEnabled <<= ( isScalaJSProject, scalaVersion ) {
+      case ( false, ScalaVersion.SupportsCoverage(_) ) => true
+      case _ =>
+        // scoverage doesn't support Scala.js (see https://github.com/scoverage/sbt-scoverage/issues/101)
+        // scoverage doesn't support 2.12 (see https://github.com/scoverage/sbt-scoverage/issues/126).
+        false
+    },
+    libraryDependencies <<= ( libraryDependencies, isScalaJSProject, scalaVersion ) {
+      case ( deps, false, ScalaVersion.SupportsCoverage(_) ) => deps
+      case ( deps, _, _ ) =>
+        // Workaround for https://github.com/scoverage/sbt-scoverage/issues/153
+        // Runtime dependencies are added automatically by the plugin and resolved prior to compilation.
+        // Since scoverage doesn't support 2.12, this results in a resolution error and the respective
+        // dependencies must be removed manually.
+        deps filterNot { _.organization startsWith "org.scoverage" }
+    }
+  )
+
   lazy val baseSettings =
     publishSettings ++
     releaseSettings ++
     compileOptions ++
+    coverageSettings ++
     sbtdoge.CrossPerProjectPlugin.projectSettings ++
     Seq(
       organization := "com.wix",
@@ -81,7 +112,7 @@ object Root extends Build {
 
   def providedScalaCompiler =
     libraryDependencies <++= scalaVersion {
-      case v if v startsWith "2.12" => Seq( "org.scala-lang" % "scala-compiler" % v % "provided" )
+      case ScalaVersion.v2_12( v ) => Seq( "org.scala-lang" % "scala-compiler" % v % "provided" )
       case _ => Seq.empty
     }
 
